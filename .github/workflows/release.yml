@@ -6,45 +6,7 @@ on:
       - "v*.*.*"
 
 jobs:
-  test:
-    runs-on: ubuntu-latest
-
-    steps:
-      - name: Checkout
-        uses: actions/checkout@v3
-
-      - name: Cache
-        uses: actions/cache@v2
-        with:
-          path: |
-            ~/.cargo/registry
-            ~/.cargo/git
-            target
-          key: ${{ runner.os }}-cargo
-
-      - name: Install latest rust toolchain
-        uses: actions-rs/toolchain@v1
-        with:
-          toolchain: stable
-          default: true
-          override: true
-
-      - name: Run linter FOSS
-        run: cargo clippy
-      - name: Run linter commercial
-        env:
-          WORTERBUCH_LICENSE_SECRET: ${{ secrets.WORTERBUCH_LICENSE_SECRET }}
-        run: cargo clippy --features=commercial
-      - name: Run tests FOSS
-        run: cargo test
-      - name: Run tests commercial
-        env:
-          WORTERBUCH_LICENSE_SECRET: ${{ secrets.WORTERBUCH_TEST_LICENSE_SECRET }}
-          WORTERBUCH_LICENSE_FILE: ./test/license
-        run: cargo test --features=commercial
-
   release:
-    needs: test
     runs-on: ${{ matrix.image }}
 
     strategy:
@@ -53,42 +15,14 @@ jobs:
         include:
           - target: x86_64-unknown-linux-gnu
             image: ubuntu-latest
-            ext: ""
           - target: x86_64-pc-windows-msvc
             image: windows-latest
-            ext: ".exe"
           - target: x86_64-apple-darwin
             image: macos-latest
-            ext: ""
 
     steps:
-      - name: Checkout
-        uses: actions/checkout@v3
-
-      - name: Cache
-        uses: actions/cache@v2
-        with:
-          path: |
-            ~/.cargo/registry
-            ~/.cargo/git
-            target
-          key: ${{ runner.os }}-cargo
-
-      - name: Install latest rust toolchain
-        uses: actions-rs/toolchain@v1
-        with:
-          toolchain: stable
-          default: true
-          override: true
-
-      - name: Build
-        run: cargo build --release
-
-      - name: Package Binaries
-        uses: vimtor/action-zip@v1
-        with:
-          files: target/release/worterbuch${{ matrix.ext }} target/release/wbget${{ matrix.ext }} target/release/wbpget${{ matrix.ext }} target/release/wbset${{ matrix.ext }} target/release/wbsub${{ matrix.ext }} target/release/wbpsub${{ matrix.ext }} target/release/wbimp${{ matrix.ext }} target/release/wbexp${{ matrix.ext }} target/release/wbsend${{ matrix.ext }}
-          dest: worterbuch-${{ matrix.target }}.zip
+      - name: Download artifacts
+        run: curl https://github.com/babymotte/worterbuch/releases/download/${{ github.ref_name }}/worterbuch-${{ matrix.target }}.zip -o worterbuch-${{ matrix.target }}.zip
 
       - name: Release
         uses: softprops/action-gh-release@v1
@@ -99,116 +33,14 @@ jobs:
     needs: release
     runs-on: ubuntu-latest
     steps:
-      - name: Checkout
-        uses: actions/checkout@v3
+      - name: Docker pull
+        shell: bash
+        run: VERSION="${{ github.ref_name }}" && docker pull babymotte/worterbuch:${VERSION/"v"/""}
 
-      - name: Docker meta
-        id: meta
-        uses: docker/metadata-action@v4
-        with:
-          # list of Docker images to use as base name for tags
-          images: |
-            babymotte/worterbuch
-          # generate Docker tags based on the following events/attributes
-          tags: |
-            type=ref,event=branch
-            type=ref,event=pr
-            type=semver,pattern={{version}}
-            type=semver,pattern={{major}}.{{minor}}
-            type=semver,pattern={{major}}
-            type=sha
+      - name: Docker tag
+        shell: bash
+        run: VERSION="${{ github.ref_name }}" && docker tag babymotte/worterbuch:${VERSION/"v"/""} wb-pro/worterbuch:${VERSION/"v"/""}
 
-      - name: Set up QEMU
-        uses: docker/setup-qemu-action@v2
-
-      - name: Set up Docker Buildx
-        uses: docker/setup-buildx-action@v2
-
-      - name: Login to DockerHub
-        if: github.event_name != 'pull_request'
-        uses: docker/login-action@v2
-        with:
-          username: ${{ secrets.DOCKERHUB_USERNAME }}
-          password: ${{ secrets.DOCKERHUB_PASSWORD }}
-
-      - name: Build and push
-        uses: docker/build-push-action@v3
-        with:
-          context: .
-          push: ${{ github.event_name != 'pull_request' }}
-          tags: ${{ steps.meta.outputs.tags }}
-          labels: ${{ steps.meta.outputs.labels }}
-
-  docker-cli:
-    needs: release
-    runs-on: ubuntu-latest
-    steps:
-      - name: Checkout
-        uses: actions/checkout@v3
-
-      - name: Docker meta
-        id: meta
-        uses: docker/metadata-action@v4
-        with:
-          # list of Docker images to use as base name for tags
-          images: |
-            babymotte/worterbuch-cli
-          # generate Docker tags based on the following events/attributes
-          tags: |
-            type=ref,event=branch
-            type=ref,event=pr
-            type=semver,pattern={{version}}
-            type=semver,pattern={{major}}.{{minor}}
-            type=semver,pattern={{major}}
-            type=sha
-
-      - name: Set up QEMU
-        uses: docker/setup-qemu-action@v2
-
-      - name: Set up Docker Buildx
-        uses: docker/setup-buildx-action@v2
-
-      - name: Login to DockerHub
-        if: github.event_name != 'pull_request'
-        uses: docker/login-action@v2
-        with:
-          username: ${{ secrets.DOCKERHUB_USERNAME }}
-          password: ${{ secrets.DOCKERHUB_PASSWORD }}
-
-      - name: Build and push
-        uses: docker/build-push-action@v3
-        with:
-          context: .
-          file: Dockerfile.cli
-          push: ${{ github.event_name != 'pull_request' }}
-          tags: ${{ steps.meta.outputs.tags }}
-          labels: ${{ steps.meta.outputs.labels }}
-
-  publish:
-    needs: release
-    runs-on: ubuntu-latest
-
-    steps:
-      - name: Checkout
-        uses: actions/checkout@v3
-
-      - name: Cache
-        uses: actions/cache@v2
-        with:
-          path: |
-            ~/.cargo/registry
-            ~/.cargo/git
-            target
-          key: ${{ runner.os }}-cargo
-
-      - name: Install latest rust toolchain
-        uses: actions-rs/toolchain@v1
-        with:
-          toolchain: stable
-          default: true
-          override: true
-
-      - name: Publish to crates.io
-        run: ./publish.sh
-        env:
-          CRATES_TOKEN: ${{ secrets.CRATES_TOKEN }}
+      - name: Docker push
+        shell: bash
+        run: VERSION="${{ github.ref_name }}" && docker push wb-pro/worterbuch:${VERSION/"v"/""}
